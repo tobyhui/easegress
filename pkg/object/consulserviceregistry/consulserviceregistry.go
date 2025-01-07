@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,18 +15,21 @@
  * limitations under the License.
  */
 
+// Package consulserviceregistry provides ConsulServiceRegistry.
 package consulserviceregistry
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/consul/api"
 
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/serviceregistry"
-	"github.com/megaease/easegress/pkg/supervisor"
+	egapi "github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/object/serviceregistry"
+	"github.com/megaease/easegress/v2/pkg/supervisor"
 )
 
 const (
@@ -42,8 +45,16 @@ const (
 	MetaKeyRegistryName = "RegistryName"
 )
 
+var aliases = []string{"consul", "consulserviceregistrys"}
+
 func init() {
 	supervisor.Register(&ConsulServiceRegistry{})
+	egapi.RegisterObject(&egapi.APIResource{
+		Category: Category,
+		Kind:     Kind,
+		Name:     strings.ToLower(Kind),
+		Aliases:  aliases,
+	})
 }
 
 type (
@@ -68,19 +79,19 @@ type (
 
 	// Spec describes the ConsulServiceRegistry.
 	Spec struct {
-		Address      string   `yaml:"address" jsonschema:"required"`
-		Scheme       string   `yaml:"scheme" jsonschema:"required,enum=http,enum=https"`
-		Datacenter   string   `yaml:"datacenter" jsonschema:"omitempty"`
-		Token        string   `yaml:"token" jsonschema:"omitempty"`
-		Namespace    string   `yaml:"namespace" jsonschema:"omitempty"`
-		SyncInterval string   `yaml:"syncInterval" jsonschema:"required,format=duration"`
-		ServiceTags  []string `yaml:"serviceTags" jsonschema:"omitempty"`
+		Address      string   `json:"address" jsonschema:"required"`
+		Scheme       string   `json:"scheme" jsonschema:"required,enum=http,enum=https"`
+		Datacenter   string   `json:"datacenter,omitempty"`
+		Token        string   `json:"token,omitempty"`
+		Namespace    string   `json:"namespace,omitempty"`
+		SyncInterval string   `json:"syncInterval" jsonschema:"required,format=duration"`
+		ServiceTags  []string `json:"serviceTags,omitempty"`
 	}
 
 	// Status is the status of ConsulServiceRegistry.
 	Status struct {
-		Health              string         `yaml:"health"`
-		ServiceInstancesNum map[string]int `yaml:"instancesNum"`
+		Health              string         `json:"health"`
+		ServiceInstancesNum map[string]int `json:"instancesNum"`
 	}
 )
 
@@ -276,7 +287,33 @@ func (c *ConsulServiceRegistry) Status() *supervisor.Status {
 func (c *ConsulServiceRegistry) Close() {
 	c.serviceRegistry.DeregisterRegistry(c.Name())
 
+	if c.superSpec.Super().Cluster().IsLeader() {
+		c.cleanExternalRegistry()
+	}
+
 	close(c.done)
+}
+
+func (c *ConsulServiceRegistry) cleanExternalRegistry() {
+	instancesToDelete := map[string]*serviceregistry.ServiceInstanceSpec{}
+
+	instances, err := c.ListAllServiceInstances()
+	if err != nil {
+		logger.Errorf("list all service instances failed: %v", err)
+		return
+	}
+
+	for _, instance := range instances {
+		if instance.RegistryName != c.Name() {
+			instancesToDelete[instance.Key()] = instance
+			logger.Infof("clean %s", instance.Key())
+		}
+	}
+	err = c.DeleteServiceInstances(instancesToDelete)
+	if err != nil {
+		logger.Errorf("delete service instances %+v failed: %v",
+			instancesToDelete, err)
+	}
 }
 
 // Name returns name.
@@ -358,7 +395,6 @@ func (c *ConsulServiceRegistry) ListServiceInstances(serviceName string) (map[st
 	}
 
 	catalogServices, err := client.ListServiceInstances(serviceName)
-
 	if err != nil {
 		return nil, err
 	}
@@ -425,12 +461,17 @@ func (c *ConsulServiceRegistry) catalogServiceToServiceInstance(catalogService *
 		registryName = catalogService.ServiceMeta[MetaKeyRegistryName]
 	}
 
+	serviceAddress := catalogService.ServiceAddress
+	if serviceAddress == "" {
+		serviceAddress = catalogService.Address
+	}
+
 	return &serviceregistry.ServiceInstanceSpec{
 		RegistryName: registryName,
 		ServiceName:  catalogService.ServiceName,
 		InstanceID:   catalogService.ServiceID,
 		Port:         uint16(catalogService.ServicePort),
 		Tags:         catalogService.ServiceTags,
-		Address:      catalogService.Address,
+		Address:      serviceAddress,
 	}
 }

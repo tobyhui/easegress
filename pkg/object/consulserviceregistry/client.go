@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -72,9 +72,7 @@ func (c *consulAPIClient) ListAllServiceInstances() ([]*api.CatalogService, erro
 			return nil, fmt.Errorf("pull catalog service %s failed: %v", serviceName, err)
 		}
 
-		for _, service := range services {
-			catalogServices = append(catalogServices, service)
-		}
+		catalogServices = append(catalogServices, services...)
 	}
 
 	return catalogServices, nil

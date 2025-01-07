@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,7 +20,7 @@ package worker
 import (
 	"net/http"
 
-	"github.com/megaease/easegress/pkg/object/meshcontroller/spec"
+	"github.com/megaease/easegress/v2/pkg/object/meshcontroller/spec"
 )
 
 const (
@@ -33,7 +33,7 @@ const (
 
 func (worker *Worker) runAPIServer() {
 	var apis []*apiEntry
-	switch worker.registryServer.RegistryType {
+	switch worker.registryType {
 	case spec.RegistryTypeConsul:
 		apis = worker.consulAPIs()
 	case spec.RegistryTypeEureka:
@@ -49,4 +49,9 @@ func (worker *Worker) runAPIServer() {
 func (worker *Worker) emptyHandler(w http.ResponseWriter, r *http.Request) {
 	// EaseMesh does not need to implement some APIS like
 	// delete, heartbeat of Eureka/Consul/Nacos.
+}
+
+func (worker *Worker) writeJSONBody(w http.ResponseWriter, buff []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(buff)
 }

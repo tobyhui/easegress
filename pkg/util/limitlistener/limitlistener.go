@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package limitlistener provides a Listener that accepts at most n simultaneous.
 package limitlistener
 
 import (
@@ -22,7 +23,7 @@ import (
 	"net"
 	"sync"
 
-	sem2 "github.com/megaease/easegress/pkg/util/sem"
+	sem2 "github.com/megaease/easegress/v2/pkg/util/sem"
 )
 
 // NewLimitListener returns a Listener that accepts at most n simultaneous

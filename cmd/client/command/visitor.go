@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,22 +15,56 @@
  * limitations under the License.
  */
 
+// Package command provides the commands.
 package command
 
 import (
 	"bufio"
+	"fmt"
 	"io"
-	"strings"
+	"os"
 
+	"github.com/megaease/easegress/v2/cmd/client/general"
+	"github.com/spf13/cobra"
 	"k8s.io/apimachinery/pkg/util/yaml"
 )
 
-// VisitorFunc executes visition logic
-type VisitorFunc func(*spec)
+// YAMLVisitor walk through multiple YAML documents
+type YAMLVisitor interface {
+	Visit(func(yamlDoc []byte) error) error
+	Close()
+}
 
-// Visitor walk through the document via VisitorFunc
-type Visitor interface {
-	Visit(VisitorFunc)
+type yamlVisitor struct {
+	reader io.Reader
+}
+
+// Visit implements YAMLVisitor
+func (v *yamlVisitor) Visit(fn func(yamlDoc []byte) error) error {
+	r := yaml.NewYAMLReader(bufio.NewReader(v.reader))
+
+	for {
+		data, err := r.Read()
+		if len(data) == 0 {
+			if err == io.EOF {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			continue
+		}
+		if err = fn(data); err != nil {
+			return err
+		}
+	}
+}
+
+// Close closes the yamlVisitor
+func (v *yamlVisitor) Close() {
+	if closer, ok := v.reader.(io.Closer); ok {
+		closer.Close()
+	}
 }
 
 type spec struct {
@@ -39,60 +73,71 @@ type spec struct {
 	doc  string
 }
 
-// StreamVisitor is the struct of Visitor Pattern
-type StreamVisitor struct {
-	io.Reader
+// SpecVisitor walk through multiple specs
+type SpecVisitor interface {
+	Visit(func(*spec) error) error
+	Close()
 }
 
-// NewStreamVisitor returns a streamVisitor.
-func NewStreamVisitor(src string) *StreamVisitor {
-	return &StreamVisitor{
-		Reader: strings.NewReader(src),
-	}
+type specVisitor struct {
+	v YAMLVisitor
 }
 
-type yamlDecoder struct {
-	reader *yaml.YAMLReader
-	doc    string
-}
+// Visit implements SpecVisitor
+func (v *specVisitor) Visit(fn func(*spec) error) error {
+	var specs []spec
 
-func newYAMLDecoder(r io.Reader) *yamlDecoder {
-	return &yamlDecoder{
-		reader: yaml.NewYAMLReader(bufio.NewReader(r)),
-	}
-}
+	err := v.v.Visit(func(yamlDoc []byte) error {
+		s := spec{}
+		doc := string(yamlDoc)
 
-// Decode reads a YAML document into bytes and tries to yaml.Unmarshal it.
-func (d *yamlDecoder) Decode(into interface{}) error {
-	bytes, err := d.reader.Read()
-	if err != nil && err != io.EOF {
-		return err
-	}
-	d.doc = string(bytes)
-	if len(bytes) != 0 {
-		err = yaml.Unmarshal(bytes, into)
-	}
-	return err
-}
-
-// Visit implements Visitor over a stream.
-func (v *StreamVisitor) Visit(fn VisitorFunc) {
-	d := newYAMLDecoder(v.Reader)
-	var validSpecs []spec
-	for {
-		var s spec
-		if err := d.Decode(&s); err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				ExitWithErrorf("error parsing %s: %v", d.doc, err)
-			}
+		err := yaml.Unmarshal(yamlDoc, &s)
+		if err != nil {
+			return fmt.Errorf("error parsing %s: %v", doc, err)
 		}
-		s.doc = d.doc
-		//TODO can validate spec's Kind here
-		validSpecs = append(validSpecs, s)
+
+		if s.Name == "" {
+			return fmt.Errorf("name is empty: %s", doc)
+		}
+
+		if s.Kind == "" {
+			return fmt.Errorf("kind is empty: %s", doc)
+		}
+
+		s.doc = doc
+		specs = append(specs, s)
+		return nil
+	})
+
+	if err != nil {
+		general.ExitWithError(err)
 	}
-	for _, s := range validSpecs {
+
+	for _, s := range specs {
 		fn(&s)
 	}
+
+	return nil
+}
+
+// Close closes the specVisitor
+func (v *specVisitor) Close() {
+	v.v.Close()
+}
+
+func buildYAMLVisitor(yamlFile string, cmd *cobra.Command) YAMLVisitor {
+	var r io.ReadCloser
+	if yamlFile == "" {
+		r = io.NopCloser(os.Stdin)
+	} else if f, err := os.Open(yamlFile); err != nil {
+		general.ExitWithErrorf("%s failed: %v", cmd.Short, err)
+	} else {
+		r = f
+	}
+	return &yamlVisitor{reader: r}
+}
+
+func buildSpecVisitor(yamlFile string, cmd *cobra.Command) SpecVisitor {
+	v := buildYAMLVisitor(yamlFile, cmd)
+	return &specVisitor{v: v}
 }

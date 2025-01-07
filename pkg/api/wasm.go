@@ -2,7 +2,7 @@
 // +build wasmhost
 
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,14 +22,14 @@ package api
 
 import (
 	"fmt"
-	"io/ioutil"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/megaease/easegress/pkg/filter/wasmhost"
 	"go.etcd.io/etcd/client/v3/concurrency"
-	"gopkg.in/yaml.v2"
+
+	"github.com/megaease/easegress/v2/pkg/filters/wasmhost"
+	"github.com/megaease/easegress/v2/pkg/util/codectool"
 )
 
 func (s *Server) isFilterExist(pipeline, filter, kind string) bool {
@@ -48,7 +48,7 @@ func (s *Server) isFilterExist(pipeline, filter, kind string) bool {
 	}
 
 	for i := range filters {
-		f, _ := filters[i].(map[interface{}]interface{})
+		f, _ := filters[i].(map[string]interface{})
 		if f == nil {
 			continue
 		}
@@ -100,13 +100,7 @@ func (s *Server) wasmListData(w http.ResponseWriter, r *http.Request) {
 		data[k] = v
 	}
 
-	buf, e := yaml.Marshal(data)
-	if e != nil {
-		panic(fmt.Errorf("marshal %#v to yaml failed: %v", data, e))
-	}
-
-	w.Header().Set("Content-Type", "text/vnd.yaml")
-	w.Write(buf)
+	WriteBody(w, r, data)
 }
 
 func (s *Server) wasmApplyData(w http.ResponseWriter, r *http.Request) {
@@ -117,14 +111,8 @@ func (s *Server) wasmApplyData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body, e := ioutil.ReadAll(r.Body)
-	if e != nil {
-		HandleAPIError(w, r, http.StatusBadRequest, e)
-		return
-	}
-
 	data := make(map[string]string)
-	if e = yaml.Unmarshal(body, data); e != nil {
+	if e := codectool.Decode(r.Body, &data); e != nil {
 		HandleAPIError(w, r, http.StatusBadRequest, e)
 		return
 	}

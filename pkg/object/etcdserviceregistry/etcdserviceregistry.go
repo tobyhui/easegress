@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,21 +15,24 @@
  * limitations under the License.
  */
 
+// Package eserviceregistry provides EtcdServiceRegistry.
 package eserviceregistry
 
 import (
+	"context"
 	"fmt"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/serviceregistry"
-	"github.com/megaease/easegress/pkg/supervisor"
-	"github.com/megaease/easegress/pkg/util/contexttool"
+	"github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/object/serviceregistry"
+	"github.com/megaease/easegress/v2/pkg/supervisor"
+	"github.com/megaease/easegress/v2/pkg/util/codectool"
 
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -42,8 +45,16 @@ const (
 	requestTimeout = 5 * time.Second
 )
 
+var aliases = []string{"etcd"}
+
 func init() {
 	supervisor.Register(&EtcdServiceRegistry{})
+	api.RegisterObject(&api.APIResource{
+		Category: Category,
+		Kind:     Kind,
+		Name:     strings.ToLower(Kind),
+		Aliases:  aliases,
+	})
 }
 
 type (
@@ -68,15 +79,15 @@ type (
 
 	// Spec describes the EtcdServiceRegistry.
 	Spec struct {
-		Endpoints    []string `yaml:"endpoints" jsonschema:"required,uniqueItems=true"`
-		Prefix       string   `yaml:"prefix" jsonschema:"required,pattern=^/"`
-		CacheTimeout string   `yaml:"cacheTimeout" jsonschema:"required,format=duration"`
+		Endpoints    []string `json:"endpoints" jsonschema:"required,uniqueItems=true"`
+		Prefix       string   `json:"prefix" jsonschema:"required,pattern=^/"`
+		CacheTimeout string   `json:"cacheTimeout" jsonschema:"required,format=duration"`
 	}
 
 	// Status is the status of EtcdServiceRegistry.
 	Status struct {
-		Health              string         `yaml:"health"`
-		ServiceInstancesNum map[string]int `yaml:"instancesNum"`
+		Health              string         `json:"health"`
+		ServiceInstancesNum map[string]int `json:"instancesNum"`
 	}
 )
 
@@ -294,21 +305,19 @@ func (e *EtcdServiceRegistry) ApplyServiceInstances(instances map[string]*servic
 			return fmt.Errorf("%+v is invalid: %v", instance, err)
 		}
 
-		buff, err := yaml.Marshal(instance)
+		buff, err := codectool.MarshalJSON(instance)
 		if err != nil {
-			return fmt.Errorf("marshal %+v to yaml failed: %v", instance, err)
+			return fmt.Errorf("marshal %+v to json failed: %v", instance, err)
 		}
 
 		key := e.serviceInstanceEtcdKey(instance)
 		ops = append(ops, clientv3.OpPut(key, string(buff)))
 	}
 
-	_, err = client.Txn(contexttool.TimeoutContext(requestTimeout)).Then(ops...).Commit()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	_, err = client.Txn(ctx).Then(ops...).Commit()
+	return err
 }
 
 // DeleteServiceInstances applies service instances to the registry.
@@ -325,23 +334,15 @@ func (e *EtcdServiceRegistry) DeleteServiceInstances(instances map[string]*servi
 		ops = append(ops, clientv3.OpDelete(key))
 	}
 
-	_, err = client.Txn(contexttool.TimeoutContext(requestTimeout)).Then(ops...).Commit()
-	if err != nil {
-		return err
-	}
-
-	return nil
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+	_, err = client.Txn(ctx).Then(ops...).Commit()
+	return err
 }
 
 // GetServiceInstance get service instance from the registry.
 func (e *EtcdServiceRegistry) GetServiceInstance(serviceName, instanceID string) (*serviceregistry.ServiceInstanceSpec, error) {
-	client, err := e.getClient()
-	if err != nil {
-		return nil, fmt.Errorf("%s get etcd client failed: %v",
-			e.superSpec.Name(), err)
-	}
-
-	resp, err := client.Get(contexttool.TimeoutContext(requestTimeout), e.serviceInstanceEtcdKeyFromRaw(serviceName, instanceID))
+	resp, err := e.getWithTimeout(requestTimeout, e.serviceInstanceEtcdKeyFromRaw(serviceName, instanceID))
 	if err != nil {
 		return nil, err
 	}
@@ -351,9 +352,9 @@ func (e *EtcdServiceRegistry) GetServiceInstance(serviceName, instanceID string)
 	}
 
 	instance := &serviceregistry.ServiceInstanceSpec{}
-	err = yaml.Unmarshal(resp.Kvs[0].Value, instance)
+	err = codectool.Unmarshal(resp.Kvs[0].Value, instance)
 	if err != nil {
-		return nil, fmt.Errorf("unmarshal %s to yaml failed: %v", resp.Kvs[0].Value, err)
+		return nil, fmt.Errorf("unmarshal %s to json failed: %v", resp.Kvs[0].Value, err)
 	}
 
 	err = instance.Validate()
@@ -364,15 +365,22 @@ func (e *EtcdServiceRegistry) GetServiceInstance(serviceName, instanceID string)
 	return instance, nil
 }
 
-// ListServiceInstances list service instances of one service from the registry.
-func (e *EtcdServiceRegistry) ListServiceInstances(serviceName string) (map[string]*serviceregistry.ServiceInstanceSpec, error) {
+func (e *EtcdServiceRegistry) getWithTimeout(timeout time.Duration, key string, opts ...clientv3.OpOption) (*clientv3.GetResponse, error) {
 	client, err := e.getClient()
 	if err != nil {
 		return nil, fmt.Errorf("%s get etcd client failed: %v",
 			e.superSpec.Name(), err)
 	}
 
-	resp, err := client.Get(contexttool.TimeoutContext(requestTimeout), e.serviceEtcdPrefix(serviceName), clientv3.WithPrefix())
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	return client.Get(ctx, key, opts...)
+}
+
+// ListServiceInstances list service instances of one service from the registry.
+func (e *EtcdServiceRegistry) ListServiceInstances(serviceName string) (map[string]*serviceregistry.ServiceInstanceSpec, error) {
+	resp, err := e.getWithTimeout(requestTimeout, e.serviceEtcdPrefix(serviceName), clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -380,9 +388,9 @@ func (e *EtcdServiceRegistry) ListServiceInstances(serviceName string) (map[stri
 	instances := make(map[string]*serviceregistry.ServiceInstanceSpec)
 	for _, kv := range resp.Kvs {
 		instance := &serviceregistry.ServiceInstanceSpec{}
-		err = yaml.Unmarshal(kv.Value, instance)
+		err = codectool.Unmarshal(kv.Value, instance)
 		if err != nil {
-			return nil, fmt.Errorf("unmarshal %s to yaml failed: %v", kv.Value, err)
+			return nil, fmt.Errorf("unmarshal %s to json failed: %v", kv.Value, err)
 		}
 
 		err = instance.Validate()
@@ -398,13 +406,7 @@ func (e *EtcdServiceRegistry) ListServiceInstances(serviceName string) (map[stri
 
 // ListAllServiceInstances list all service instances from the registry.
 func (e *EtcdServiceRegistry) ListAllServiceInstances() (map[string]*serviceregistry.ServiceInstanceSpec, error) {
-	client, err := e.getClient()
-	if err != nil {
-		return nil, fmt.Errorf("%s get etcd client failed: %v",
-			e.superSpec.Name(), err)
-	}
-
-	resp, err := client.Get(contexttool.TimeoutContext(requestTimeout), e.spec.Prefix, clientv3.WithPrefix())
+	resp, err := e.getWithTimeout(requestTimeout, e.spec.Prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
@@ -412,9 +414,9 @@ func (e *EtcdServiceRegistry) ListAllServiceInstances() (map[string]*serviceregi
 	instances := make(map[string]*serviceregistry.ServiceInstanceSpec)
 	for _, kv := range resp.Kvs {
 		instance := &serviceregistry.ServiceInstanceSpec{}
-		err = yaml.Unmarshal(kv.Value, instance)
+		err = codectool.Unmarshal(kv.Value, instance)
 		if err != nil {
-			return nil, fmt.Errorf("unmarshal %s to yaml failed: %v", kv.Value, err)
+			return nil, fmt.Errorf("unmarshal %s to codectool failed: %v", kv.Value, err)
 		}
 
 		err = instance.Validate()

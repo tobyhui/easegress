@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,11 +18,9 @@
 package worker
 
 import (
-	"bytes"
-	"encoding/json"
 	"encoding/xml"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -30,9 +28,10 @@ import (
 	"github.com/ArthurHlt/go-eureka-client/eureka"
 	"github.com/go-chi/chi/v5"
 
-	"github.com/megaease/easegress/pkg/api"
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/meshcontroller/registrycenter"
+	"github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/object/meshcontroller/registrycenter"
+	"github.com/megaease/easegress/v2/pkg/util/codectool"
 )
 
 type (
@@ -139,7 +138,7 @@ func (worker *Worker) detectedAccept(accept string) string {
 }
 
 func (worker *Worker) eurekaRegister(w http.ResponseWriter, r *http.Request) {
-	body, err := ioutil.ReadAll(r.Body)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		api.HandleAPIError(w, r, http.StatusBadRequest,
 			fmt.Errorf("read body failed: %v", err))
@@ -313,12 +312,8 @@ func (worker *Worker) getInstance(w http.ResponseWriter, r *http.Request) {
 func (worker *Worker) encodeByAcceptType(accept string, jsonSt interface{}, xmlSt interface{}) ([]byte, error) {
 	switch accept {
 	case registrycenter.ContentTypeJSON:
-		buff := bytes.NewBuffer(nil)
-		enc := json.NewEncoder(buff)
-		err := enc.Encode(jsonSt)
-		return buff.Bytes(), err
+		return codectool.MarshalJSON(jsonSt)
 	default:
-		buff, err := xml.Marshal(xmlSt)
-		return buff, err
+		return xml.Marshal(xmlSt)
 	}
 }

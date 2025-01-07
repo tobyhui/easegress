@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+// Package eurekaserviceregistry provides EurekaServiceRegistry.
 package eurekaserviceregistry
 
 import (
@@ -24,9 +25,10 @@ import (
 
 	eurekaapi "github.com/ArthurHlt/go-eureka-client/eureka"
 
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/serviceregistry"
-	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/object/serviceregistry"
+	"github.com/megaease/easegress/v2/pkg/supervisor"
 )
 
 const (
@@ -38,10 +40,20 @@ const (
 
 	// MetaKeyRegistryName is the key of service metadata.
 	MetaKeyRegistryName = "RegistryName"
+
+	name = "eurekaserviceregistry"
 )
+
+var aliases = []string{"eureka"}
 
 func init() {
 	supervisor.Register(&EurekaServiceRegistry{})
+	api.RegisterObject(&api.APIResource{
+		Category: Category,
+		Kind:     Kind,
+		Name:     name,
+		Aliases:  aliases,
+	})
 }
 
 type (
@@ -66,14 +78,14 @@ type (
 
 	// Spec describes the EurekaServiceRegistry.
 	Spec struct {
-		Endpoints    []string `yaml:"endpoints" jsonschema:"required,uniqueItems=true"`
-		SyncInterval string   `yaml:"syncInterval" jsonschema:"required,format=duration"`
+		Endpoints    []string `json:"endpoints" jsonschema:"required,uniqueItems=true"`
+		SyncInterval string   `json:"syncInterval" jsonschema:"required,format=duration"`
 	}
 
 	// Status is the status of EurekaServiceRegistry.
 	Status struct {
-		Health              string         `yaml:"health"`
-		ServiceInstancesNum map[string]int `yaml:"instancesNum"`
+		Health              string         `json:"health"`
+		ServiceInstancesNum map[string]int `json:"instancesNum"`
 	}
 )
 
@@ -266,7 +278,7 @@ func (e *EurekaServiceRegistry) Notify() <-chan *serviceregistry.RegistryEvent {
 func (e *EurekaServiceRegistry) ApplyServiceInstances(instances map[string]*serviceregistry.ServiceInstanceSpec) error {
 	client, err := e.getClient()
 	if err != nil {
-		return fmt.Errorf("%s get consul client failed: %v",
+		return fmt.Errorf("%s get eureka client failed: %v",
 			e.superSpec.Name(), err)
 	}
 
@@ -292,7 +304,7 @@ func (e *EurekaServiceRegistry) ApplyServiceInstances(instances map[string]*serv
 func (e *EurekaServiceRegistry) DeleteServiceInstances(instances map[string]*serviceregistry.ServiceInstanceSpec) error {
 	client, err := e.getClient()
 	if err != nil {
-		return fmt.Errorf("%s get consul client failed: %v",
+		return fmt.Errorf("%s get eureka client failed: %v",
 			e.superSpec.Name(), err)
 	}
 
@@ -326,7 +338,7 @@ func (e *EurekaServiceRegistry) GetServiceInstance(serviceName, instanceID strin
 func (e *EurekaServiceRegistry) ListServiceInstances(serviceName string) (map[string]*serviceregistry.ServiceInstanceSpec, error) {
 	client, err := e.getClient()
 	if err != nil {
-		return nil, fmt.Errorf("%s get consul client failed: %v",
+		return nil, fmt.Errorf("%s get eureka client failed: %v",
 			e.superSpec.Name(), err)
 	}
 
@@ -353,7 +365,7 @@ func (e *EurekaServiceRegistry) ListServiceInstances(serviceName string) (map[st
 func (e *EurekaServiceRegistry) ListAllServiceInstances() (map[string]*serviceregistry.ServiceInstanceSpec, error) {
 	client, err := e.getClient()
 	if err != nil {
-		return nil, fmt.Errorf("%s get consul client failed: %v",
+		return nil, fmt.Errorf("%s get eureka client failed: %v",
 			e.superSpec.Name(), err)
 	}
 
@@ -401,11 +413,14 @@ func (e *EurekaServiceRegistry) instanceInfoToServiceInstances(info *eurekaapi.I
 
 	if info.Port != nil && info.Port.Enabled {
 		plain := baseServiceInstanceSpec
+		plain.Port = uint16(info.Port.Port)
+		plain.Scheme = "http"
 		instances = append(instances, &plain)
 	}
 
 	if info.SecurePort != nil && info.SecurePort.Enabled {
 		secure := baseServiceInstanceSpec
+		secure.Port = uint16(info.SecurePort.Port)
 		secure.Scheme = "https"
 		instances = append(instances, &secure)
 	}

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,20 +15,23 @@
  * limitations under the License.
  */
 
+// Package zookeeperserviceregistry implements the ZookeeperServiceRegistry.
 package zookeeperserviceregistry
 
 import (
 	"fmt"
 	"path"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/object/serviceregistry"
-	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/object/serviceregistry"
+	"github.com/megaease/easegress/v2/pkg/supervisor"
+	"github.com/megaease/easegress/v2/pkg/util/codectool"
 
 	zookeeper "github.com/go-zookeeper/zk"
-	"gopkg.in/yaml.v2"
 )
 
 const (
@@ -37,12 +40,16 @@ const (
 
 	// Kind is the kind of ZookeeperServiceRegistry.
 	Kind = "ZookeeperServiceRegistry"
-
-	requestTimeout = 5 * time.Second
 )
 
 func init() {
 	supervisor.Register(&ZookeeperServiceRegistry{})
+	api.RegisterObject(&api.APIResource{
+		Category: Category,
+		Kind:     Kind,
+		Name:     strings.ToLower(Kind),
+		Aliases:  []string{"zookeeper", "zk", "zkserviceregistries"},
+	})
 }
 
 type (
@@ -67,16 +74,16 @@ type (
 
 	// Spec describes the ZookeeperServiceRegistry.
 	Spec struct {
-		ConnTimeout  string   `yaml:"conntimeout" jsonschema:"required,format=duration"`
-		ZKServices   []string `yaml:"zkservices" jsonschema:"required,uniqueItems=true"`
-		Prefix       string   `yaml:"prefix" jsonschema:"required,pattern=^/"`
-		SyncInterval string   `yaml:"syncInterval" jsonschema:"required,format=duration"`
+		ConnTimeout  string   `json:"conntimeout" jsonschema:"required,format=duration"`
+		ZKServices   []string `json:"zkservices" jsonschema:"required,uniqueItems=true"`
+		Prefix       string   `json:"prefix" jsonschema:"required,pattern=^/"`
+		SyncInterval string   `json:"syncInterval" jsonschema:"required,format=duration"`
 	}
 
 	// Status is the status of ZookeeperServiceRegistry.
 	Status struct {
-		Health              string         `yaml:"health"`
-		ServiceInstancesNum map[string]int `yaml:"serviceInstancesNum"`
+		Health              string         `json:"health"`
+		ServiceInstancesNum map[string]int `json:"serviceInstancesNum"`
 	}
 )
 
@@ -303,9 +310,9 @@ func (zk *ZookeeperServiceRegistry) ApplyServiceInstances(serviceInstances map[s
 	}
 
 	for _, instance := range serviceInstances {
-		buff, err := yaml.Marshal(instance)
+		buff, err := codectool.MarshalJSON(instance)
 		if err != nil {
-			return fmt.Errorf("marshal %+v to yaml failed: %v", instance, err)
+			return fmt.Errorf("marshal %+v to json failed: %v", instance, err)
 		}
 
 		path := zk.serviceInstanceZookeeperPath(instance)
@@ -375,9 +382,9 @@ func (zk *ZookeeperServiceRegistry) ListServiceInstances(serviceName string) (ma
 		}
 
 		instance := &serviceregistry.ServiceInstanceSpec{}
-		err = yaml.Unmarshal(data, instance)
+		err = codectool.Unmarshal(data, instance)
 		if err != nil {
-			return nil, fmt.Errorf("%s unmarshal fullpath %s to yaml failed: %v", zk.superSpec.Name(), fullPath, err)
+			return nil, fmt.Errorf("%s unmarshal fullpath %s to json failed: %v", zk.superSpec.Name(), fullPath, err)
 		}
 
 		err = instance.Validate()
@@ -413,9 +420,9 @@ func (zk *ZookeeperServiceRegistry) ListAllServiceInstances() (map[string]*servi
 		}
 
 		instance := &serviceregistry.ServiceInstanceSpec{}
-		err = yaml.Unmarshal(data, instance)
+		err = codectool.Unmarshal(data, instance)
 		if err != nil {
-			return nil, fmt.Errorf("%s unmarshal fullpath %s to yaml failed: %v", zk.superSpec.Name(), fullPath, err)
+			return nil, fmt.Errorf("%s unmarshal fullpath %s to json failed: %v", zk.superSpec.Name(), fullPath, err)
 		}
 
 		err = instance.Validate()

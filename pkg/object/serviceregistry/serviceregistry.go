@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,14 +15,17 @@
  * limitations under the License.
  */
 
+// Package serviceregistry provides the service registry.
 package serviceregistry
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
-	"github.com/megaease/easegress/pkg/logger"
-	"github.com/megaease/easegress/pkg/supervisor"
+	"github.com/megaease/easegress/v2/pkg/api"
+	"github.com/megaease/easegress/v2/pkg/logger"
+	"github.com/megaease/easegress/v2/pkg/supervisor"
 )
 
 const (
@@ -35,6 +38,12 @@ const (
 
 func init() {
 	supervisor.Register(&ServiceRegistry{})
+	api.RegisterObject(&api.APIResource{
+		Category: Category,
+		Kind:     Kind,
+		Name:     strings.ToLower(Kind),
+		Aliases:  []string{"sr", "serviceregistry"},
+	})
 }
 
 type (
@@ -46,7 +55,7 @@ type (
 		superSpec *supervisor.Spec
 		spec      *Spec
 
-		mutex sync.Mutex
+		mutex *sync.Mutex
 
 		// The key is registry name.
 		registryBuckets map[string]*registryBucket
@@ -73,10 +82,7 @@ type (
 
 	// Spec describes ServiceRegistry.
 	Spec struct {
-		// TODO: Support updating for system controller.
-		// Please notice some components may reference of old system controller
-		// after reloading, this should be fixed.
-		SyncInterval string `yaml:"syncInterval" jsonschema:"required,format=duration"`
+		SyncInterval string `json:"syncInterval" jsonschema:"required,format=duration"`
 	}
 
 	// Status is the status of ServiceRegistry.
@@ -245,8 +251,8 @@ func (sr *ServiceRegistry) DeregisterRegistry(registryName string) error {
 
 	sr._handleRegistryEvent(cleanEvent)
 
-	bucket.registered, bucket.registry = false, nil
 	close(bucket.done)
+	bucket.registered, bucket.registry, bucket.done = false, nil, make(chan struct{})
 
 	if bucket.needClean() {
 		delete(sr.registryBuckets, registryName)
@@ -360,17 +366,25 @@ func (sr *ServiceRegistry) DefaultSpec() interface{} {
 // Init initializes ServiceRegistry.
 func (sr *ServiceRegistry) Init(superSpec *supervisor.Spec) {
 	sr.superSpec, sr.spec = superSpec, superSpec.ObjectSpec().(*Spec)
-	sr.reload()
+	sr.reload(nil)
 }
 
 // Inherit inherits previous generation of ServiceRegistry.
 func (sr *ServiceRegistry) Inherit(superSpec *supervisor.Spec, previousGeneration supervisor.Object) {
+	sr.superSpec, sr.spec = superSpec, superSpec.ObjectSpec().(*Spec)
+	sr.reload(previousGeneration.(*ServiceRegistry))
 	previousGeneration.Close()
-	sr.Init(superSpec)
 }
 
-func (sr *ServiceRegistry) reload() {
-	sr.registryBuckets = make(map[string]*registryBucket)
+func (sr *ServiceRegistry) reload(previousGeneration *ServiceRegistry) {
+	if previousGeneration != nil {
+		sr.registryBuckets = previousGeneration.registryBuckets
+		sr.mutex = previousGeneration.mutex
+	} else {
+		sr.registryBuckets = make(map[string]*registryBucket)
+		sr.mutex = &sync.Mutex{}
+	}
+
 	sr.done = make(chan struct{})
 }
 

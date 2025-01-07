@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2017, MegaEase
+ * Copyright (c) 2017, The Easegress Authors
  * All rights reserved.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,23 +26,23 @@ type (
 	// ServiceInstanceSpec is the service instance spec in Easegress.
 	ServiceInstanceSpec struct {
 		// RegistryName is required.
-		RegistryName string `yaml:"registryName"`
+		RegistryName string `json:"registryName"`
 		// ServiceName is required.
-		ServiceName string `yaml:"serviceName"`
+		ServiceName string `json:"serviceName"`
 		// InstanceID is required.
-		InstanceID string `yaml:"instanceID"`
+		InstanceID string `json:"instanceID"`
 
 		// Address is required.
-		Address string `yaml:"address"`
+		Address string `json:"address"`
 		// Port is required.
-		Port uint16 `yaml:"port"`
+		Port uint16 `json:"port"`
 
 		// Scheme is optional.
-		Scheme string `yaml:"scheme"`
+		Scheme string `json:"scheme"`
 		// Tags is optional.
-		Tags []string `yaml:"tags"`
+		Tags []string `json:"tags"`
 		// Weight is optional.
-		Weight int `yaml:"weight"`
+		Weight int `json:"weight"`
 	}
 )
 
@@ -51,9 +51,7 @@ func (s *ServiceInstanceSpec) DeepCopy() *ServiceInstanceSpec {
 	copy := *s
 
 	if s.Tags != nil {
-		for _, tag := range s.Tags {
-			copy.Tags = append(copy.Tags, tag)
-		}
+		copy.Tags = append(copy.Tags, s.Tags...)
 	}
 
 	return &copy
